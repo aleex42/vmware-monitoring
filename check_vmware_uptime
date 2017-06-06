@@ -1,0 +1,72 @@
+#!/usr/bin/perl -w
+
+# nagios: -epn
+# --
+# check_vmware_uptime - Check Host uptime
+# Copyright (C) 2017 noris network AG, http://www.noris.net/
+# --
+# This software comes with ABSOLUTELY NO WARRANTY. For details, see
+# the enclosed file COPYING for license information (GPL). If you
+# did not receive this file, see http://www.gnu.org/licenses/gpl.txt.
+# --
+
+$ENV{'PERL_LWP_SSL_VERIFY_HOSTNAME'} = 0;
+
+use strict;
+use warnings;
+
+use VMware::VICredStore;
+use VMware::VIRuntime;
+use VMware::VILib;
+use VMware::VIExt;
+
+use Date::Parse;
+use Time::Local;
+
+use Getopt::Long qw(:config no_ignore_case);
+
+######
+
+GetOptions(
+    'H|hostname=s' => \my $Hostname,
+    'u|username=s' => \my $Username,
+    'p|password=s' => \my $Password,
+    'h|help'     => sub { exec perldoc => -F => $0 or die "Cannot execute perldoc: $!\n"; },
+) or Error("$0: Error in command line arguments\n");
+
+sub Error {
+    print "$0: " . $_[0] . "\n";
+    exit 2;
+}
+Error('Option --hostname needed!') unless $Hostname;
+Error('Option --username needed!') unless $Username;
+
+unless($Password){
+  VMware::VICredStore::init(filename => "/etc/nagios3/.vmware/credstore/vicredentials.xml");
+  $Password = VMware::VICredStore::get_password(server => $Hostname, username => $Username);
+  VMware::VICredStore::close();
+}
+
+$Hostname .= ":443" if (index($Hostname, ":") == -1);
+$Hostname = "https://" . $Hostname . "/sdk/webService";
+
+if(defined($Password)){
+  Util::connect($Hostname, $Username, $Password);
+}
+
+my $host = Vim::find_entity_view(view_type => 'HostSystem', properties => [ 'summary' ]);
+
+my $uptime = $host->summary->quickStats->uptime;
+
+my $days = $uptime/3600/24;
+$days = sprintf("%.2f", $days);
+
+Util::disconnect();
+
+if($uptime < "1800"){
+    print "CRITICAL: Host uptime only $uptime second(s)\n";
+    exit 2;
+} else {
+    print "OK: Host uptime $days day(s)\n";
+    exit 0;
+}
